@@ -1,0 +1,540 @@
+---
+title: "Limpieza de la variable dependencia economica"
+author: "Edgardo Flores Gutiérrez"
+date: "2025-10-5"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    collapsed: true
+    smooth_scroll: true
+    theme: journal
+    highlight: kate
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	include = TRUE
+)
+```
+
+# Extracción, Limpieza y Carga del dataset
+
+# Extracción
+
+```{r Carga de Paquetes}
+# Cargar paquetes
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(DT) 
+```
+
+```{r Dataset Ingresos}
+# Extraer la tabla de datos ingresos.csv de la ENIGH 2024
+df_ingresos <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/ingresos.csv")
+```
+
+```{r Dataset Poblacion}
+# Extraer la tabla de datos población.csv de la ENIGH 2024
+df_poblacion <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/poblacion.csv")
+```
+
+```{r Dataset Viviendas}
+# Extraer la tabla de datos viviendas.csv de la ENIGH 2024
+df_viviendas <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/viviendas.csv")
+```
+
+# Limpieza
+
+## Análisis exploratorio
+
+```{r Tipo de Dataset, include=FALSE}
+class(df_poblacion)
+class(df_ingresos)
+class(df_viviendas)
+```
+
+```{r }
+head(df_poblacion)
+tail(df_poblacion)
+```
+
+```{r include=FALSE}
+glimpse(df_poblacion)
+```
+
+```{r include=FALSE}
+glimpse(df_ingresos) 
+```
+
+```{r include=FALSE}
+glimpse(df_viviendas)
+```
+
+## Cruce de datos
+
+Tabla Base (poblacion): Contiene folioviv, foliohog, num_ren (identificador único de persona), sexo y edad.
+
+Tabla de perceptores (creada a partir de la tabla ingresos): Esta tabla solo lista a las personas que reportaron algún ingreso. Contiene las llaves (folioviv, foliohog, num_ren) y el ingreso monetario total (ing_mon).
+
+-   Solo se utilizarán las columnas folioviv, foliohog, num_ren y ing_mon.
+
+-   Se aplicará el filtro para que solo solo se crucen los individuos con el ingreso monetario (ing_mon) mayor a 0.
+
+Para realizar el cruce se utiliza "left join" (cruce izquierdo). Empezar con todas las personas (poblacion) y concatenar con la información de la tabla de perceptores.
+
+-   Las personas que SÍ están en la tabla ingresos son perceptores.
+
+-   Las personas que NO están en la tabla ingresos (y por lo tanto obtienen un NA en el cruce) son no-perceptores.
+
+Finalmente, se filtra por edad \>= 12 y perceptor == 0 ó perceptor = 1 y solo_ajeno = 1 para encontrar a los individuos con dependencia económica.
+
+Tabla zona (creada a partir de la tabla viviendas): contiene folioviv y tam_loc (para calcular el tipo de zona, urbana o rural)
+
+**Cruce entre la tabla zona (viviendas) y la tabla población**
+
+```{r df_zona}
+# Crear tabla de zona, se considera unicamente el folioviv y el tam_loc
+df_zona <- df_viviendas %>% 
+  select(folioviv, tam_loc)
+
+head(df_zona)
+```
+
+```{r Cruce df_zona y df_poblacion}
+# Cruzar la tabla de zona con la tabla población mediante folioviv
+df_poblacion <- left_join(df_poblacion, df_zona, by = "folioviv", suffix = c("pob", "zon"))
+```
+
+```{r include=FALSE}
+glimpse(df_poblacion)
+```
+
+**Creación de la variable FVH**
+
+```{r}
+# Crear variable FVH(Folio vivienda hogar) para la tabla población y la tabla ingresos:
+# Se consideran las variables: folioviv, foliohog y numren
+
+# FVH Ingresos
+df_ingresos <- df_ingresos %>% 
+    mutate(FVH = paste0(folioviv, foliohog, numren))
+  
+# FVH Población
+df_poblacion <- df_poblacion %>% 
+  mutate(FVH = paste0(folioviv, foliohog, numren))
+```
+
+**Creación de la tabla perceptores a partir de la tabla de ingresos**
+
+Se considera *perceptor* a aquel individuo con un ingreso mayor a cero (se evaluá mediante la variable ing_tri)
+
+```{r}
+# Crear tabla "Perceptores"
+df_perceptores <- df_ingresos %>% 
+  filter(ing_tri > 0) %>% 
+  group_by(FVH, folioviv, foliohog, numren, clave) %>% 
+  summarise(ing_tri = sum(ing_tri, na.rm = TRUE)) %>%
+  ungroup() %>% 
+  mutate(perceptor = 1)
+```
+
+**Cruce de la tabla perceptores y la tabla poblacion (df_pob_per)**
+
+```{r}
+# Cruzar la tabla población y la tabla perceptores mediante la columna FVH
+df_pob_per <- left_join(df_poblacion, df_perceptores, by = "FVH", suffix = c("pob", "per"))
+
+```
+
+```{r include=FALSE}
+glimpse(df_pob_per)
+```
+
+**Análisis de la tabla df_pob_per**
+
+```{r}
+
+# Análisis exploratorio de la nueva tabla resultado del cruce
+datatable(
+  df_pob_per %>% 
+    select(FVH, foliovivpob, foliohogpob, numrenpob, numrenper, 
+           ing_tri, perceptor) %>% 
+    slice(1:50),
+  class = 'cell-border stripe', 
+  
+  # 2. Ocultar números de fila de R
+  rownames = FALSE,
+  
+  # 3. Opciones de funcionalidad (para hacerlo más limpio)
+  options = list(
+    scrollX = TRUE,       # Scroll horizontal
+    searching = FALSE,    # Oculta la barra de búsqueda
+    info = FALSE,         # Oculta el texto "Showing 1 of X entries"
+    lengthChange = FALSE, # Oculta el menú "Show X entries"
+    pageLength = 10,      # Cuántas filas mostrar por defecto
+    
+    # Controla dónde aparecen los botones (T = Tabla, L = Length, P = Paginación)
+    dom = 'tp' 
+  )
+)
+```
+
+```{r}
+# Contar filas nulas (no son perceptores de ingresos)
+sum(is.na(df_pob_per$perceptor))
+```
+
+## Creación de variables
+
+**Variable: dependencia economica (dep_eco)**
+
+*Dependiente económico*: Persona de 12 años o más SIN ingreso corriente monetario (perceptor de ingreso) o con percepción de ingresos ajenos al trabajo.
+
+Se consideran las siguientes columnas:
+
+-   edad
+
+-   perceptor
+
+```{r}
+# Vector con las claves de ingresos ajenos al trabajo
+claves1 <- sprintf("P%03d", 23:66) 
+claves2 <- sprintf("P%04d", 101:108)
+```
+
+```{r}
+# Combinar ambos vectores en uno solo
+claves <- c(claves1, claves2)
+print(claves)
+```
+
+```{r}
+df_dep_eco <- df_pob_per %>%
+  # Marcar qué filas son de ingresos ajenos al trabajo
+  # Si 'clave' es NA (no perceptor), lo marcamos como 1 (válido) 
+  # para que pase el filtro de 'ajeno'.
+  mutate(
+    ajeno = ifelse(
+      is.na(clave), 1, 
+      ifelse(clave %in% claves, 1, 0)
+    )
+  ) %>%
+  
+  # Agrupar por individuo
+  group_by(FVH, foliovivpob, foliohogpob, numrenpob, sexo, disc_ver, disc_oir, disc_brazo, disc_camin, disc_apren, disc_vest, disc_habla, disc_acti, tam_loc, hor_3, hor_4, hor_5, hor_6, entidad, nivelaprob, est_dis, upm, factor, etnia, afrod) %>%
+  
+  # Resumir en UNA fila por individuo
+  summarise(
+    edad = first(edad), 
+    
+    # Crear la columna 'ingreso' sumando todos sus ing_tri
+    ingreso = sum(ing_tri, na.rm = TRUE),
+    
+    # Definir si es perceptor (ingreso total es > 0)
+    perceptor = ifelse(ingreso > 0, 1, 0),
+    
+    # Verificar si *todas* sus fuentes de ingreso son ajenas al trabajo.
+    # Si 'min(ajeno)' es 1, significa que solo tuvo ingresos
+    # ajenos al trabajo (o no tuvo ingresos).
+    # Si es 0, significa que tuvo al menos UN ingreso que NO era ajeno al trabajo.
+    solo_ajeno = min(ajeno)
+  ) %>%
+  ungroup() %>%
+  
+  # Definir la variable dep_eco
+  mutate(
+    dep_eco = as.double(
+      edad >= 12 & (perceptor == 0 | solo_ajeno == 1)
+    )
+  )
+```
+
+```{r}
+# Análisis exploratorio de la nueva columna dep_eco
+df_dep_eco %>% 
+  select(FVH, sexo, edad, ingreso, perceptor, solo_ajeno, dep_eco) %>% 
+  slice(1:50) %>% 
+  datatable(
+    options = list(scrollX = TRUE), # Habilita el scroll horizontal
+    rownames = FALSE
+  )
+```
+
+```{r}
+df_dep_eco %>% 
+  filter(dep_eco == 1) %>% 
+  select(FVH, sexo, edad, ingreso, perceptor, solo_ajeno, dep_eco)
+```
+
+**Variable: discapacidad**
+
+Se consideran las siguientes variables de la tabla población:
+
+-   disc_ver = discapacidad para ver
+
+-   disc_oir = discapacidad para escuchar
+
+-   disc_brazo = discapacidad para usar brazos
+
+-   disc_camin = discapacidad para caminar
+
+-   disc_apren = discapacidad para aprender
+
+-   disc_vest = discapacidad para vestirse
+
+-   disc_habla = discapacidad para hablar
+
+-   disc_acti = discapacidad para realizar actividades diarias
+
+```{r}
+df_dep_eco <- df_dep_eco %>% 
+  mutate(discapacidad = case_when(
+    # La condición verifica si ALGUNO de los valores en las columnas especificadas es igual a 3 O es igual a 4.
+    if_any(
+      .cols = starts_with("disc_"),  # Selecciona todas las columnas que empiezan con "disc_"
+      .fns = ~ .x == 3 | .x == 4   # La función que se aplica: ¿es 3 o 4?
+    ) ~ "Si",
+    # Si la condición anterior no se cumple, el valor es "no"
+    TRUE ~ "No"
+  ))
+
+```
+
+```{r}
+# Análisis exploratorio de la nueva columna "discapacidad"
+df_dep_eco %>%
+  select(FVH, starts_with("disc_"), discapacidad) %>% 
+  slice(1:50) %>% 
+    datatable(
+    options = list(scrollX = TRUE), # Habilita el scroll horizontal
+    rownames = FALSE
+  )
+```
+
+**Variable: trabajo no remunerado (horas_tnr)**
+
+Se consideran las siguientes variables:
+
+1.  hor_3: Horas de trabajo comunitario.
+
+2.  hor_4: Horas de cuidado de otras personas.
+
+3.  hor_5: Horas de reparación.
+
+4.  hor_6: Horas dedicadas a quehacer.
+
+```{r}
+df_dep_eco <- df_dep_eco %>% 
+  mutate(
+    horas_tnr_bruto = rowSums(
+      select(.,hor_3, hor_4, hor_5, hor_6),
+      na.rm = TRUE #Ignora los NA al sumar
+    )
+  )
+```
+
+```{r}
+# Aplicar tope de 112 horas a la variable horas_tnr
+df_dep_eco <- df_dep_eco %>% 
+  mutate(
+    horas_tnr = pmin(horas_tnr_bruto, 112)
+  )
+```
+
+```{r}
+# Análisis exploratorio de la nueva columna "horas_tnr"
+df_dep_eco %>%
+  select(FVH, hor_3, hor_4, hor_5, hor_6, horas_tnr) %>% 
+  slice(1:50)
+```
+
+## Selección, Filtro y Transformación de variables a trabajar
+
+Las variables a utilizar son:
+
+-   FVH
+-   sexo
+-   edad
+-   ingreso
+-   horas_tnr
+-   etnia
+-   afrod
+-   discapacidad
+-   tam_loc
+-   entidad
+-   nivelaprob
+-   est_dis
+-   upm
+-   factor
+
+```{r}
+# Selecionar variables a trabajar
+dependencia_economica <- df_dep_eco %>% 
+  filter(dep_eco == 1) %>% 
+  select(FVH, sexo, edad, ingreso, horas_tnr, etnia, afrod, discapacidad, tam_loc, entidad, nivelaprob, est_dis, upm, factor)
+
+# Contar NA en todas las columnas
+dependencia_economica %>%
+  summarise(across(everything(), ~sum(is.na(.))))
+```
+
+```{r}
+# Tranformar variables sexo, dep_eco, etnia, afrod, zona, entidad y nivelaprob
+dependencia_economica <- dependencia_economica %>% 
+  mutate(sexo = case_when(
+    sexo == 1 ~"Hombre",
+    sexo == 2 ~"Mujer")
+    ) %>% 
+  mutate(etnia = case_when(
+    etnia == 1 ~ "Si",
+    etnia == 2 ~ "No")
+    ) %>% 
+  mutate(afrod = case_when(
+    afrod == 1 ~ "Si",
+    afrod == 2 ~ "No")
+    ) %>% 
+  mutate(zona = case_when(
+    tam_loc == 1 ~ "Urbana",
+    tam_loc == 2 ~ "Urbana",
+    tam_loc == 3 ~ "Urbana",
+    tam_loc == 4 ~ "Rural")
+    ) %>% 
+  mutate(entidad = case_when(
+    entidad == 1 ~ "Aguascalientes",
+    entidad == 2 ~ "Baja California",
+    entidad == 3 ~ "Baja California Sur",
+    entidad == 4 ~ "Campeche",
+    entidad == 5 ~ "Coahuila de Zaragoza",
+    entidad == 6 ~ "Colima",
+    entidad == 7 ~ "Chiapas",
+    entidad == 8 ~ "Chihuahua",
+    entidad == 9 ~ "Ciudad de Mexico",
+    entidad == 10 ~ "Durango",
+    entidad == 11 ~ "Guanajuato",
+    entidad == 12 ~ "Guerrero",
+    entidad == 13 ~ "Hidalgo",
+    entidad == 14 ~ "Jalisco",
+    entidad == 15 ~ "Mexico",
+    entidad == 16 ~ "Michoacan de Ocampo",
+    entidad == 17 ~ "Morelos",
+    entidad == 18 ~ "Nayarit",
+    entidad == 19 ~ "Nuevo Leon",
+    entidad == 20 ~ "Oaxaca",
+    entidad == 21 ~ "Puebla",
+    entidad == 22 ~ "Queretaro",
+    entidad == 23 ~ "Quintana Roo",
+    entidad == 24 ~ "San Luis Potosi",
+    entidad == 25 ~ "Sinaloa",
+    entidad == 26 ~ "Sonora",
+    entidad == 27 ~ "Tabasco",
+    entidad == 28 ~ "Tamaulipas",
+    entidad == 29 ~ "Tlaxcala",
+    entidad == 30 ~ "Veracruz",
+    entidad == 31 ~ "Yucatan",
+    entidad == 32 ~ "Zacatecas",
+    TRUE ~ NA_character_) # Para cualquier otro valor
+    ) %>% 
+  mutate(escolaridad = case_when(
+    nivelaprob == 0 ~ "Ninguno",
+    nivelaprob == 1 ~ "Preescolar",
+    nivelaprob == 2 ~ "Primaria",
+    nivelaprob == 3 ~ "Secundaria",
+    nivelaprob == 4 ~ "Preparatoria",
+    nivelaprob == 5 ~ "Normal",
+    nivelaprob == 6 ~ "Tecnicatura",
+    nivelaprob == 7 ~ "Licenciatura",
+    nivelaprob == 8 ~ "Especialidad",
+    nivelaprob == 9 ~ "Maestria",
+    nivelaprob == 10 ~ "Doctorado")
+    )
+
+dependencia_economica %>% 
+  slice(1:50)
+```
+
+```{r}
+# Crear la variable región
+dependencia_economica <- dependencia_economica %>%
+  mutate(region = case_when(
+    entidad == "Aguascalientes" ~ "Centro", 
+    entidad == "Baja California" ~ "Norte",
+    entidad == "Baja California Sur" ~ "Norte",
+    entidad == "Campeche" ~ "Sur",
+    entidad == "Chiapas" ~ "Sur",
+    entidad == "Chihuahua" ~ "Norte", 
+    entidad == "Ciudad de Mexico" ~ "Centro", 
+    entidad == "Coahuila de Zaragoza" ~ "Norte",
+    entidad == "Colima" ~ "Occidente",
+    entidad == "Durango" ~ "Norte",
+    entidad == "Mexico" ~ "Centro",
+    entidad == "Guanajuato" ~ "Centro",
+    entidad == "Guerrero" ~ "Sur",
+    entidad == "Hidalgo" ~ "Centro",
+    entidad == "Jalisco" ~ "Occidente",
+    entidad == "Michoacan de Ocampo" ~ "Occidente",
+    entidad == "Morelos" ~ "Centro",
+    entidad == "Nayarit" ~ "Occidente",
+    entidad == "Nuevo Leon" ~ "Norte",
+    entidad == "Oaxaca" ~ "Sur",
+    entidad == "Puebla" ~ "Centro",
+    entidad == "Queretaro" ~ "Centro", 
+    entidad == "Quintana Roo" ~ "Sur",
+    entidad == "San Luis Potosi" ~ "Centro",
+    entidad == "Sinaloa" ~ "Norte",
+    entidad == "Sonora" ~ "Norte",
+    entidad == "Tabasco" ~ "Sur",
+    entidad == "Tamaulipas" ~ "Norte",
+    entidad == "Tlaxcala" ~ "Centro",
+    entidad == "Veracruz" ~ "Sur", 
+    entidad == "Yucatan" ~ "Sur",
+    entidad == "Zacatecas" ~ "Centro")
+    )
+dependencia_economica %>% 
+  slice(1:10) 
+```
+
+**Definición del nivel de pobreza en base a la linea de pobreza moderada y pobreza extrema por ingresos del CONEVAL**
+
+```{r}
+dependencia_economica <- dependencia_economica %>%
+  mutate(ingreso_mensual = round(ingreso/3), 2) %>% 
+  mutate(nivel_pobreza = case_when(
+    # Evaluar Pobreza Extrema
+    zona == "Urbana" & ingreso_mensual <= 2363.67 ~ "Pobreza por Ingresos Extrema",
+    zona == "Rural" & ingreso_mensual <= 1799.71 ~ "Pobreza por Ingresos Extrema",
+  
+    # Evaluar Pobreza Moderada
+    zona == "Urbana" & ingreso_mensual <= 4640.16 ~ "Pobreza por Ingresos",
+    zona == "Rural" & ingreso_mensual <= 3334.24 ~ "Pobreza por Ingresos",
+    
+    # Asignar un valor a los que no son pobres
+    # 'TRUE' captura todos los casos restantes
+    TRUE ~ "No Pobreza" 
+  ))
+```
+
+```{r}
+dependencia_economica %>% 
+  select(FVH, sexo, zona, ingreso, ingreso_mensual, nivel_pobreza)
+```
+
+```{r}
+dependencia_economica <- dependencia_economica %>% 
+  select(FVH, sexo, edad, horas_tnr, ingreso_mensual, nivel_pobreza, etnia, afrod, discapacidad, zona, entidad, region, escolaridad, est_dis, upm, factor)
+```
+
+# Carga
+
+Exportar a formato csv la base limpia.
+
+```{r include=TRUE}
+write.csv(dependencia_economica, "dependencia_economica.csv", row.names = FALSE)
+```
