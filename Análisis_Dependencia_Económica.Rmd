@@ -1,0 +1,2160 @@
+---
+title: "DEPENDENCIA ECONÓMICA"
+author: "Edgardo Flores Gutiérrez"
+date: "2025-09-28"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    collapsed: true
+    smooth_scroll: true
+    theme: journal
+    highlight: kate
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, include=TRUE)
+```
+
+```{r Cargar PaquetesL}
+# Cargar paquetes
+library(tidyverse)
+library(survey)
+library(ggthemes)
+library(scales)
+library(lubridate)
+library(hms)
+```
+
+# Introducción
+
+El siguiente análisis se sustenta en la ENIGH 2024 publicada por el INEGI, centrándose en las tablas de datos "poblacion", "ingresos" y "viviendas", que nos permite conocer las características sociodemográficas y ocupacionales de los integrantes del hogar, ademas de la variable tam_loc que indica el tamaño de localidad, que se encuentra en la tabla viviendas y la variable ing_tri que nos permite descifrar si los individuos evaluados son dependientes económicos.
+
+La encuesta contiene un diseño muestral estatrificado, con representatividad nacional y subnacional, por lo que, la encuesta cuenta con tres variables para la realización del diseño muestral y realizar inferencia estadística:
+
+1.  factor: peso de expansión
+
+2.  est_dis: estrato
+
+3.  upm: unidad primaria de muestreo.
+
+El análisis tiene como objetivo conocer el número de individuos que son dependientes económicos con un enfoque de género.
+
+Estructura del análisis:
+
+-   Definición del diseño muestral
+
+-   Análisis estadístico por segmento:
+
+    -   Medidas de tendencia central
+
+    -   Comparación de medias y medianas entre grupos
+
+-   Visualización de resultados (Data visualization)
+
+-   Modelo de regresión final con ajuste por diseño muestral (opcional)
+
+```{r Cargar data}
+data_dependencia_economica <- read.csv("https://raw.githubusercontent.com/Edgardo2501/Data_Analysis_Projects/refs/heads/main/dependencia_economica.csv")
+```
+
+# Diseño muestral
+
+El diseño muestral con el que fue recolectada la ENIGH 2024 valida los resultados del análisis estadístico,
+
+De acuerdo con el documento metodológico de la ENIGH 2024 Nueva Serie Descripción de la base de datos (INEGI, Capítulo 4) est_dis corresponde a un código de estrato estadístico definido por características como: • Nivel de urbanización (urbano/rural) • Tamaño de localidad • Categoría de la entidad federativa (grande, mediana, pequeña) • Dominio de estudio (entidad, ciudad, región)
+
+UPM identifica cada Unidad Primaria de Muestreo, que en zonas urbanas equivale generalmente a una manzana o conjunto de manzanas, y en zonas rurales, a localidades. Las UPM se seleccionan con probabilidad proporcional al tamaño poblacional, y constituyen la base para la selección de viviendas.
+
+Factor: el factor de expansión constituye el peso que se le da a cada unidad muestral para generalizar los resultados de la muestra a la población.
+
+El **diseño muestral** es el plan o estrategia que se utiliza para seleccionar una muestra a partir de una población más grande. En esencia, es el conjunto de procedimientos que nos permite elegir un subgrupo representativo (la muestra) de un grupo total (la población) con el fin de estudiarlo y poder generalizar los resultados a toda la población.
+
+El objetivo principal es obtener información precisa y confiable sobre la población sin tener que estudiar a cada uno de sus individuos, lo que a menudo sería demasiado costoso, lento o simplemente imposible.
+
+**Definición del diseño muestral**
+
+```{r}
+# Definición del diseño muestral
+# Declarar el diseño de la encuesta para la tabla 'data_dependencia_economica'
+
+
+enigh_design <- svydesign(ids = ~upm, # Especifica las Unidades Primarias de Muestreo (~upm)
+                          strata = ~est_dis, # Especifica los estratos (~est_dis)
+                          weights = ~factor, # Especifica el factor de expansión
+                          data = data_dependencia_economica, 
+                          nest = TRUE) # Indica que las UPM están anidadas dentro de los estratos
+
+# Ajuste para estratos con una sola UPM
+options(survey.lonely.psu = "adjust")
+```
+
+# Análisis estadístico
+
+Para realizar un análisis estádistico correcto, es preciso conocer la cantidad de personas que representa el diseño muestral, así como las medidas de tendencia central.
+
+Población total que son dependientes económicos (por sexo)
+
+## **Dependientes económicos (por sexo)**
+
+```{r}
+# Calcular el total de la población que son dependientes económicos en México por sexo
+poblacion_total <- svytotal(~sexo, design = enigh_design)
+
+# Convertir el objeto 'svytotal' como dataframe
+poblacion_total <- as.data.frame(poblacion_total)
+poblacion_total$Total <- comma(poblacion_total$total)
+poblacion_total$Error_Estandar <- comma(poblacion_total$SE)
+
+poblacion_total %>% 
+  select(Total, Error_Estandar)
+```
+
+## **Total de dependientes económicos**
+
+```{r}
+# Total de personas que son dependientes económicos en México
+total_personas_grupo <- sum(poblacion_total$total)
+
+cat("El número total de personas (población expandida) que son dependientes económicos es:", 
+    comma(total_personas_grupo, accuracy = 1))
+```
+
+## **Dependientes económicos por tipo de dependencia y sexo**
+
+Actualizamos el diseño muestral con dos variables nuevas:
+
+-   Variable 1: tipo_dependencia, clasifica a los dependientes en dos grupos basados en 'ingreso_mensual'
+
+-   Variable 2: Sexo como Factor (Categórico)
+
+-   Variable 3: Agregamos una columna 'uno' que vale 1 para cada individuo (fines técnicos)
+
+```{r}
+# Modificar el diseño muestral con las tres variables nuevas
+enigh_design_act <- update(enigh_design, 
+                           tipo_dependencia = ifelse(ingreso_mensual == 0, "1. Dependientes por no percibir ingresos", "2. Dependientes por percibir ingresos de transferencias"), 
+                           sexo = factor(sexo),
+                           uno = 1)
+
+```
+
+## **Tipo de dependientes económicos (total por sexo)**
+
+Calculamos el total de dependientes económicos por no ser perceptores de ingresos y por percibir ingresos por transferencias, desagregado por sexo y con porcentajes del total.
+
+```{r}
+
+# Calcular el total de todos los dependientes
+dep_eco_total <- svytotal(~uno, design = enigh_design_act, na.rm = TRUE)
+
+# Extraemos el valor numérico del total
+valor_total <- coef(dep_eco_total)[1]
+
+# Crear un nuevo calculo estadístico por grupo (svyby)
+dependientes_sexo <- svyby(
+  ~uno,
+  by = ~tipo_dependencia + sexo,
+  design = enigh_design_act,
+  FUN = svytotal,
+  na.rm = TRUE
+)
+
+# Convertir el objeto 'svyby' a un dataframe
+df_tipo_dependencia <- as.data.frame(dependientes_sexo)
+
+# Renombrar las columnas de total y error estándar
+num_cols_tot <- ncol(df_tipo_dependencia)
+names(df_tipo_dependencia)[num_cols_tot - 1] <- "Total"
+names(df_tipo_dependencia)[num_cols_tot] <- "Error_Estandar"
+
+# Aplicar formato y eliminar los rownames (columna indexada)
+dependientes_economicos <- df_tipo_dependencia %>%
+  rownames_to_column("TEMP_INDEX") %>% # Mueve los rownames (índice) a una columna temporal
+  mutate(
+    Porcentaje_general = percent(Total / valor_total, accuracy = 0.1),
+    Total = comma(Total, accuracy = 1),
+    Error_Estandar = comma(Error_Estandar, accuracy = 1)
+  ) %>%
+  select(
+    tipo_dependencia, 
+    sexo, 
+    Total, 
+    Porcentaje_general,
+    Error_Estandar
+  )
+
+# Imprimir dataframe
+print(dependientes_economicos) 
+```
+
+## Composición interna
+
+Calculamos la proporción de hombres y mujeres que son dependientes económicos por no ser perceptores de ingresos y por ser perceptores de ingresos de transferencias
+
+```{r}
+# Crear un nuevo calculo estadístico por grupo (svyby)
+composicion_interna <- svyby(
+  ~sexo,
+  by = ~tipo_dependencia,       # Agrupando por tipo de dependencia
+  design = enigh_design_act,    # El diseño que contiene 'sexo'
+  FUN = svymean,                # La función es svymean (proporción)
+  na.rm = TRUE
+)
+
+# Convertir el objeto 'svyby' a un dataframe
+df_composicion <- as.data.frame(composicion_interna) %>%
+  # Renombrar columnas
+  rename(
+    Porc_Hombre = sexoHombre,
+    Porc_Mujer = sexoMujer,
+    SE_Hombre = se.sexoHombre,
+    SE_Mujer = se.sexoMujer
+  ) %>%
+  # Aplicar formato de porcentaje
+  mutate(
+    Porc_Hombre_fmt = percent(Porc_Hombre, accuracy = 0.1),
+    Porc_Mujer_fmt = percent(Porc_Mujer, accuracy = 0.1)
+  ) %>%
+  # Eliminamos el índice
+  rownames_to_column("TEMP_INDEX") %>%
+  select(
+    tipo_dependencia,
+    Porc_Hombre_fmt,
+    Porc_Mujer_fmt
+  )
+
+# Imprimir el dataframe de composición
+print(df_composicion)
+
+```
+
+## Estadísticas descriptivas
+
+### Edad
+
+-   Edad promedio y mediana de la población que son dependientes económicos (por sexo)
+
+```{r}
+# Calcular la edad promedio desagregada por sexo
+edad_promedio_por_sexo <- svyby(~edad, by = ~sexo + tipo_dependencia, design = enigh_design_act, FUN = svymean)
+```
+
+```{r}
+# Calcular la mediana de la edad desagregada por sexo
+# svyquantile para especificar el cuantil 0.5 (mediana).
+edad_mediana_por_sexo <- svyby(~edad, 
+                            by = ~sexo, 
+                            design = enigh_design_act, 
+                            FUN = svyquantile, 
+                            quantiles = 0.5,
+                            ci = TRUE) # ci=TRUE para el intervalo de confianza
+```
+
+```{r}
+# Renombrar nombres de columnas
+colnames(edad_promedio_por_sexo)[3] <- "media"
+colnames(edad_promedio_por_sexo)[4] <- "se_media"
+colnames(edad_mediana_por_sexo)[2] <- "mediana"
+colnames(edad_mediana_por_sexo)[3] <- "se_mediana"
+
+# Unir los dos data frames en uno solo
+# Usamos la función merge() para unir por la columna 'sexo'
+estadisticas_finales <- merge(edad_promedio_por_sexo, edad_mediana_por_sexo, by = "sexo")
+
+# Redondear resultados
+estadisticas_finales <- estadisticas_finales %>%
+  mutate(media = round(media, 0))
+
+
+# Imprimir el dataframe estadisticas_finales
+print(estadisticas_finales)
+```
+
+**Gráfica del Promedio de edad de la población con Dependencia Económica**
+
+```{r fig.width=10, fig.height=7}
+edad_promedio_por_sexo %>% 
+  ggplot(aes(x = tipo_dependencia, y = media, fill = sexo)) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    color = "black", 
+    linewidth = 1, 
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = round(media), vjust = -0.5), 
+    position = position_dodge(width = 0.8),
+    size = 5,
+    color = "black", 
+    show.legend = FALSE) +
+  labs(
+    title = "Gráfica 1. Promedio de Edad de la Población con Dependencia Económica",
+    subtitle = "(Agrupado por sexo)",
+    x = "",
+    y = "",
+    caption = "Fuente: Elaboración propia con base a datos de la ENIGH 2024"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())+
+    scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+**Gráfico de Boxplot para visualizar la dispersión de la edad**
+
+```{r fig.width=10, fig.height=7}
+# Gráfico de boxplot
+data_dependencia_economica %>% 
+  ggplot(aes(x = sexo, y = edad, fill = sexo)) +
+  geom_boxplot() +
+  labs(
+    title = "Gráfica 2. Dispersión de la edad",
+    subtitle = "Población con Dependencia Económica",
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.line.x = element_blank(),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+  scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+### Horas de trabajo no remunerado
+
+-   Horas semanales promedio y mediana de trabajo no remunerado (por sexo) de la población con dependencia económica
+
+```{r}
+# Calcular las horas promedio de trabajo no remunerado por sexo
+horas_promedio_por_sexo <- svyby(~horas_tnr, by = ~sexo + tipo_dependencia, design = enigh_design_act, FUN = svymean)
+```
+
+```{r}
+horas_mediana_por_sexo <- svyby(~horas_tnr, 
+                            by = ~sexo, 
+                            design = enigh_design_act, 
+                            FUN = svyquantile, 
+                            quantiles = 0.5,
+                            ci = TRUE) # ci=TRUE para el intervalo de confianza
+```
+
+```{r}
+colnames(horas_promedio_por_sexo)[3] <- "media"
+colnames(horas_promedio_por_sexo)[4] <- "se_media"
+colnames(horas_mediana_por_sexo)[2] <- "mediana"
+colnames(horas_mediana_por_sexo)[3] <- "se_mediana"
+
+# Unir los dos data frames en uno solo
+# Usamos la función merge() para unir por la columna 'sexo'
+estadisticas_finales_horas <- merge(horas_promedio_por_sexo, horas_mediana_por_sexo, by = "sexo")
+
+# Crear columnas con formato hh:mm:ss
+estadisticas_finales_horas <- estadisticas_finales_horas %>%
+  mutate(
+    media_hm = as_hms(media * 3600),
+    mediana_hm = as_hms(mediana * 3600)
+  )
+
+# Usamos round_hms() con digits = 0 para redondear al segundo más cercano
+estadisticas_finales_horas <- estadisticas_finales_horas %>%
+  mutate(
+    media_hm = round_hms(media_hm, digits = 0),
+    mediana_hm = round_hms(mediana_hm, digits = 0)
+  )
+
+# Imprimir el resultado final
+print(estadisticas_finales_horas)
+```
+
+```{r fig.width=10, fig.height=7}
+estadisticas_finales_horas %>% 
+  ggplot(aes(x = tipo_dependencia, y = media, fill = sexo)) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    color = "black", 
+    linewidth = 1, 
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = round(media,2)), 
+    position = position_dodge(width = 0.8),
+    size = 5,
+    vjust = -0.5, size = 4) +
+  labs(
+    title = "Gráfica 3. Promedio de horas a la semana de trabajo no remunerado",
+    subtitle = "",
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "NA") +
+  scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+```{r fig.width=10, fig.height=7}
+# Gráfico de boxplot para analizar la dispersión de las horas de trabajo no remunerado
+data_dependencia_economica %>% 
+  ggplot(aes(x = sexo, y = horas_tnr, fill = sexo)) +
+  geom_boxplot() +
+  labs(
+    title = "Gráfica 4. Distribución de las horas a la semana de trabajo no remunerado",
+    subtitle = "(Promedio por sexo)",
+    y = "",
+    x = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "") +
+  scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+Dada la fuerte asimetria y la gran cantidad de valores atípicos (outliers) en las horas de trabajo no remunerado (Gráfica 4), la **mediana** es una medida de tendencia central mucho más adecuada y robusta que la **media**.
+
+#### Transformación Logarítimica
+
+Con la intención de normalizar los datos, se realiza una transformación logarítmica. El objetivo es crear una nueva columna que contenga el logaritmo de las horas de trabajo no remunerado.
+
+#### Justificación de la Transformación Logarítmica
+
+La decisión de transformar una variable $Y$ a $log(Y)$ no es una medida arbitraria para alterar la escala de los datos, sino un procedimiento estándar en econometría y estadística que se justifica por una o más de las siguientes razones teóricas y prácticas:
+
+-   **Mecanismo de Acción:** La función logarítmica es cóncava, lo que significa que "comprime" la escala de los valores altos en mayor medida que la de los valores bajos. Esto reduce el impacto de los valores extremos en la cola derecha de la distribución, resultando en una distribución transformada mucho más simétrica y, a menudo, aproximadamente normal.
+
+-   **Beneficio Estadístico:** Al normalizar la distribución de la variable (o, más precisamente, la de los residuos del modelo), se obtienen estimadores más eficientes y se valida el uso de pruebas de significancia (valores p) y la construcción de intervalos de confianza, los cuales dependen del supuesto de normalidad.
+
+```{r }
+# 1. Visualizar la distribución ANTES y DESPUÉS de la transformación
+
+# Gráfica de la distribución antes de la transformación:
+plot_original <- ggplot(data_dependencia_economica, aes(x = horas_tnr)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black") +
+  labs(title = "Distribución sin normalizar",
+       x = "Horas de trabajo no remunerado",
+       y = "Frecuencia") +
+  theme_minimal()
+
+# 2. Aplicar la transformación logarítmica
+data_dependencia_economica <- data_dependencia_economica %>%
+  mutate(horas_log = log1p(horas_tnr))
+
+# Gráfica de la distribución transformada
+plot_transformada <- ggplot(data_dependencia_economica, aes(x = horas_log)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "black") +
+  labs(title = "Distribución con Transformación Logarítmica",
+       x = "log(Horas + 1)",
+       y = "Frecuencia") +
+  theme_minimal()
+
+plot_original
+plot_transformada
+```
+
+```{r}
+# 1. Calcular las tres métricas clave para comparar
+media_original <- mean(data_dependencia_economica$horas_tnr)
+mediana_original <- median(data_dependencia_economica$horas_tnr)
+
+# 2. Calcular la media de la variable transformada
+media_log <- mean(data_dependencia_economica$horas_log)
+
+# 3. Revertir la transformación para obtener la media geométrica
+media_geometrica <- exp(media_log) - 1
+
+# 4. Imprimir y comparar los resultados
+print(paste("Media Aritmética Original (sesgada):", round(media_original, 2)))
+print(paste("Mediana Original (robusta):", round(mediana_original, 2)))
+print(paste("Media Geométrica (robusta e interpretable):", round(media_geometrica, 2)))
+```
+
+### Ingreso mensual
+
+-   Ingreso mensual promedio y mediana de la población con dependencia económica (por sexo).
+
+**Cálculos estadísticos con el diseño muestral**
+
+```{r}
+# Calcular el ingreso mensual por sexo
+ingreso_promedio_por_sexo <- svyby(~ingreso_mensual, 
+                                   by = ~sexo + tipo_dependencia, 
+                                   design = enigh_design_act, 
+                                   FUN = svymean)
+
+# Calcular la mediana de ingreso mensual por sexo
+mediana_ingreso_por_sexo <- svyby(~ingreso_mensual, 
+                            by = ~sexo, 
+                            design = enigh_design_act, 
+                            FUN = svyquantile, 
+                            quantiles = 0.5,
+                            ci = TRUE) # ci=TRUE para el intervalo de confianza
+```
+
+**Tabla para visualizar los cálculos estadísticos**
+
+```{r}
+# Renombrar nombres de columnas
+colnames(ingreso_promedio_por_sexo)[3] <- "media"
+colnames(ingreso_promedio_por_sexo)[4] <- "se_media"
+colnames(mediana_ingreso_por_sexo)[2] <- "mediana"
+colnames(mediana_ingreso_por_sexo)[3] <- "se_mediana"
+
+# Unir los dos data frames en uno solo
+# Usamos la función merge() para unir por la columna 'sexo'
+estadisticas_ingreso_mensual <- merge(ingreso_promedio_por_sexo, mediana_ingreso_por_sexo, by = "sexo")
+
+# Redondear resultados
+estadisticas_ingreso_mensual <- estadisticas_ingreso_mensual %>%
+  mutate(media = round(media, 0))
+
+
+# Imprimir el dataframe estadisticas_finales
+print(estadisticas_ingreso_mensual)
+```
+
+**Gráfica del Promedio del Ingreso mensual de la población con Dependencia Económica**
+
+```{r fig.width=10, fig.height=7}
+ingreso_promedio_por_sexo %>% 
+  ggplot(aes(x = sexo, y = media, fill = sexo)) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    color = "black", 
+    linewidth = 1, 
+    width = 0.7) +
+  geom_text(
+    aes(
+      label = round(media),
+      vjust = -0.5), 
+    position = position_dodge(width = 0.8),
+    size = 5,
+    color = "black", 
+    show.legend = FALSE) +
+  labs(
+    title = "Gráfica 5. Ingreso Mensual Promedio de la Población con Dependencia Económica",
+    subtitle = "(Agrupado por sexo)",
+    x = "",
+    y = "",
+    caption = "Fuente: Elaboración propia con base a datos de la ENIGH 2024"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())+
+  scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+**Gráfico de Boxplot para visualizar la dispersión del ingreso mensual**
+
+```{r fig.width=10, fig.height=7}
+# Gráfico de boxplot
+data_dependencia_economica %>% 
+  ggplot(aes(x = sexo, y = ingreso_mensual, fill = sexo)) +
+  geom_boxplot() +
+  labs(
+    title = "Gráfica 2. Dispersión del Ingreso mensual",
+    subtitle = "Población con Dependencia Económica",
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.line.x = element_blank(),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+  scale_fill_manual(values = c("Mujer" = "mediumorchid4", "Hombre" = "#27408B"))
+```
+
+Dado la alta dispersión del Ingreso mensual, es necesario realizar un análisis por separado, primero se analizar la población que es dependiente económica por no ser perceptor de ingresos (ingreso_mensual == 0), el segundo análisis corresponde a la población que es dependiente económica por ser perceptor de ingresos ajenos al trabajo (ingreso \> 0)
+
+#### Dependencia económica por no percibir ingresos
+
+Análisis de la población que es dependiente económica por no ser perceptor de ingresos, es decir, su ingreso mensual es igual a cero.
+
+Para fines prácticos, definimos esta dependencia como una nueva variable: "dep_eco_sin_ing"
+
+```{r}
+# Filtrar ingreso
+dep_eco_sin_ing <- data_dependencia_economica %>% 
+  filter(ingreso_mensual==0) %>% 
+  select(FVH, sexo, edad, horas_log, etnia, afrod, discapacidad, zona, entidad, region, escolaridad)
+
+# Se omiten las columnas ingreso_mensual y nivel_pobreza ya que pierden sentido para realizar el análisis 
+```
+
+```{r}
+# Conversión de columnas caracteres a factores
+cols_a_factor <- c("sexo", "etnia", "afrod", "discapacidad", 
+                   "zona", "entidad", "region", "escolaridad")
+
+# Realizamos la conversión
+dep_eco_sin_ing <- dep_eco_sin_ing %>%
+  mutate(across(all_of(cols_a_factor), as.factor)) 
+```
+
+```{r}
+# Histograma de Edad
+ggplot(dep_eco_sin_ing, aes(x = edad)) +
+  geom_histogram(binwidth = 5, fill = "navyblue", alpha = 0.7) +
+  labs(title = "Distribución de la Edad", x = "Edad", y = "Frecuencia") +
+  theme_minimal() 
+```
+
+```{r}
+# Tablas de frecuencia (counts) y proporciones
+# Sexo
+dep_eco_sin_ing %>% count(sexo, sort = TRUE) %>% mutate(prop = n / sum(n))
+
+# Region
+dep_eco_sin_ing %>% count(region, sort = TRUE) %>% mutate(prop = n / sum(n))
+
+# Escolaridad
+dep_eco_sin_ing %>% count(escolaridad, sort = TRUE) %>% mutate(prop = n / sum(n))
+```
+
+```{r}
+# Propuesta 1: Horas de Trabajo no Remunerado por Sexo
+# Resumen estadístico
+trabajo_nr_por_sexo <- dep_eco_sin_ing %>%
+  group_by(sexo) %>%
+  summarise(
+    conteo = n(),
+    media_horas = mean(horas_log, na.rm = TRUE),
+    mediana_horas = median(horas_log, na.rm = TRUE),
+    max_horas = max(horas_log, na.rm = TRUE)
+  ) 
+trabajo_nr_por_sexo <- trabajo_nr_por_sexo %>% 
+  mutate(mediageom_tnr = exp(media_horas) - 1)
+
+print(trabajo_nr_por_sexo)
+```
+
+##### Gráfico de Caja de las Horas de Trabajo no Remunerado
+
+```{r fig.width=10, fig.height=7}
+# Gráfico de Boxplot: Horas TNR por Sexo
+ggplot(dep_eco_sin_ing, aes(x = sexo, y = horas_log, fill = sexo)) +
+  geom_boxplot() +
+  labs(title = "Horas de TNR por Sexo", 
+       x = "Sexo", 
+       y = "") +
+  theme_minimal() +
+  theme(legend.position = "none") 
+```
+
+##### Gráfica 1.
+
+Promedio de horas de trabajo no remunerado por sexo de personas dependientes económicas por no percibir ingresos
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 1. Promedio de horas de trabajo no remunerado por sexo de personas dependientes económicas por no percibir ingresos
+trabajo_nr_por_sexo <- dep_eco_sin_ing %>% 
+  group_by(sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+  # summarise(median_tnr = median(horas_tnr), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_sexo <- trabajo_nr_por_sexo %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+  
+# Convertir horas a formato hh:mm:ss
+#  trabajo_nr_por_sexo <- trabajo_nr_por_sexo %>% 
+#    mutate(
+#    media_hm = as_hms(mediageom_tnr * 3600)
+#    #mediana_hm = as_hms(median_tnr * 3600)
+#  )
+
+ggplot(trabajo_nr_por_sexo, aes(x = sexo, y = mediageom_tnr, fill = sexo)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.8, width = 0.5) +
+  geom_text(aes(label = round(mediageom_tnr, 2),vjust = -0.5, size = 1)) +
+  labs(title = "Gráfica 1. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por no percibir ingresos)",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "NONE",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold")
+  ) +
+  scale_fill_manual(values = c("Hombre" = "orchid3", "Mujer" = "steelblue")) 
+```
+
+##### Gráfica 2.
+
+Promedio de horas de trabajo no remunerado por sexo y etnia de personas dependientes económicas por no percibir ingresos
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 2. Promedio de horas de trabajo no remunerado por sexo y etnia
+trabajo_nr_por_etnia <- dep_eco_sin_ing %>% 
+  group_by(etnia, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_etnia <- trabajo_nr_por_etnia %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+ggplot(trabajo_nr_por_etnia, aes(x = sexo, y = mediageom_tnr, fill = etnia)) +
+  geom_col(color = "black", position = "dodge", linewidth = 0.8) +
+  geom_text(aes(label = round(mediageom_tnr, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 2. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por no percibir ingresos) \n 
+       Agrupados por sexo y etnia",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "darkgreen", "No" = "orange"))
+```
+
+##### Gráfica 3.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 3. Promedio de horas de trabajo no remunerado por afrodescendencia y sexo
+trabajo_nr_por_afrod <- dep_eco_sin_ing %>% 
+  group_by(afrod, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_afrod <- trabajo_nr_por_afrod %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+ggplot(trabajo_nr_por_afrod, aes(x = sexo, y = mediageom_tnr, fill = afrod)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 3. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por no percibir ingresos) \n 
+       Agrupados por afrodescendencia y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#6495ED", "No" = "#8B0000"))
+
+```
+
+##### Gráfica 4.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 4. Promedio de horas de trabajo no remunerado por zona y sexo
+trabajo_nr_por_zona <- dep_eco_sin_ing %>% 
+  group_by(zona, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_zona <- trabajo_nr_por_zona %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+# Gráfica
+ggplot(trabajo_nr_por_zona, aes(x = sexo, y = mediageom_tnr, fill = zona)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 4. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por no percibir ingresos) \n 
+       Agrupados por zona y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Urbana" = "#66CDAA", "Rural" = "#0000CD"))
+```
+
+##### Gráfica 5.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 5. Promedio de horas de trabajo no remunerado por discapacidad y sexo
+trabajo_nr_por_disc <- dep_eco_sin_ing %>% 
+  group_by(discapacidad, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_disc <- trabajo_nr_por_disc %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+# Gráfica
+ggplot(trabajo_nr_por_disc, aes(x = sexo, y = mediageom_tnr, fill = discapacidad)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 5. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por no percibir ingresos) \n 
+       Agrupados por discapacidad y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#E6E6FA", "No" = "#9400D3"))
+```
+
+##### Gráfico Combinado
+
+```{r}
+# Realizamos dataframes para cada variable
+df1 <- trabajo_nr_por_sexo %>%
+  mutate(
+    desglose = "Promedio general",
+    valor_desglose = sexo 
+  )
+
+df2 <- trabajo_nr_por_etnia %>%
+  rename(valor_desglose = etnia) %>%  
+  mutate(desglose = "Etnia")
+
+df3 <- trabajo_nr_por_afrod %>%
+  rename(valor_desglose = afrod) %>%
+  mutate(desglose = "Afrodescendencia")
+
+df4 <- trabajo_nr_por_zona %>%
+  rename(valor_desglose = zona) %>%
+  mutate(desglose = "Zona")
+
+df5 <- trabajo_nr_por_disc %>%
+  rename(valor_desglose = discapacidad) %>%
+  mutate(desglose = "Discapacidad")
+
+# df6 <- trabajo_nr_por_reg %>%
+#  rename(valor_desglose = region) %>%
+#  mutate(desglose = "Región")
+```
+
+```{r}
+# Unimos todos los dataframes creados en un nuevo dataframe
+data_combinada <- bind_rows(df1, df2, df3, df4, df5)
+```
+
+```{r}
+# Definir orden exacto
+orden_paneles <- c(
+  "Promedio general", 
+  "Etnia", 
+  "Afrodescendencia", 
+  "Discapacidad", 
+  "Zona"
+)
+
+# Reescribe la columna 'desglose' como un factor ordenado
+data_combinada <- data_combinada %>%
+  mutate(desglose = factor(desglose, levels = orden_paneles)) 
+```
+
+```{r}
+# Paleta de colores
+paleta_colores <- c(
+  "Hombre" = "#27408B", "Mujer" = "orchid4"
+)
+```
+
+```{r fig.width=20, fig.height=10}
+# Gráfica final
+ggplot(data_combinada, aes(x = valor_desglose, y = mediageom_tnr, fill = sexo)) +
+  geom_col(color = "black", position = "dodge", linewidth = 0.8) +
+  geom_text(
+    aes(label = round(mediageom_tnr, 2)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, 
+    size = 4.5,
+    color = "black",
+  ) +
+  # 'scales = "free_x"' elimina los espacios extra en el eje X
+  facet_wrap(~ desglose, nrow = 1, scales = "free_x") +
+  labs(
+    title = "Promedio de horas semanales de trabajo no remunerado en 2024",
+    subtitle = "Dependientes económicos por no percibir ingresos. \n Comparativa por sexo y otras variables de desagregación",
+    caption = "\n Fuente: Elaboración propia con base a la ENIGH 2024, INEGI",
+    x = NULL, 
+    y = "",
+    fill = ""
+  ) +
+  scale_fill_manual(values = paleta_colores) + 
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 24, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 16),
+    plot.caption = element_text(hjust = 0, size = 14),
+    legend.position = "top",
+    legend.text = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+#### Dependencia económica por solo percibir ingresos ajenos al trabajo
+
+Análisis de la población que es dependiente económica por ser perceptores exclusivamente de ingresos ajenos al trabajo
+
+Para fines prácticos, definimos esta dependencia como una nueva variable: "dep_eco_ing"
+
+```{r}
+# Filtrar ingreso
+dep_eco_ing <- data_dependencia_economica %>% 
+  filter(ingreso_mensual>0) %>% 
+  select(FVH, sexo, edad, ingreso_mensual, nivel_pobreza, horas_log, etnia, afrod, discapacidad, zona, entidad, region, escolaridad)
+
+# Se omiten las columnas ingreso_mensual y nivel_pobreza ya que pierden sentido para realizar el análisis 
+```
+
+```{r}
+# Conversión de columnas caracteres a factores
+cols_a_factor <- c("sexo", "etnia", "afrod", "discapacidad", 
+                   "zona", "entidad", "region", "escolaridad")
+
+# Realizamos la conversión
+dep_eco_ing <- dep_eco_ing %>%
+  mutate(across(all_of(cols_a_factor), as.factor)) 
+```
+
+```{r}
+# Histograma de Edad
+ggplot(dep_eco_ing, aes(x = edad)) +
+  geom_histogram(binwidth = 5, fill = "navyblue", alpha = 0.7) +
+  labs(title = "Distribución de la Edad", x = "Edad", y = "Frecuencia") +
+  theme_minimal()
+```
+
+```{r}
+# Tablas de frecuencia (counts) y proporciones
+# Sexo
+dep_eco_ing %>% count(sexo, sort = TRUE) %>% mutate(prop = n / sum(n))
+
+# Region
+dep_eco_ing %>% count(region, sort = TRUE) %>% mutate(prop = n / sum(n))
+
+# Escolaridad
+dep_eco_ing %>% count(escolaridad, sort = TRUE) %>% mutate(prop = n / sum(n))
+```
+
+##### Gráfico de Cajas
+
+```{r fig.width=10, fig.height=7}
+# Gráfico de Boxplot: Horas TNR por Sexo
+ggplot(dep_eco_ing, aes(x = sexo, y = horas_log, fill = sexo)) +
+  geom_boxplot() +
+  labs(title = "Horas de TNR por Sexo", 
+       x = "Sexo", 
+       y = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+##### Gráfica 1.
+
+Horas de trabajo no remunerado por sexo de personas dependientes económicas por solo percibir ingresos de transferencias.
+
+```{r}
+# Propuesta 1: Horas de Trabajo no Remunerado por Sexo
+# Resumen estadístico
+trabajo_nr_por_sexo_ing <- dep_eco_ing %>%
+  group_by(sexo) %>%
+  summarise(
+    conteo = n(),
+    media_horas = mean(horas_log, na.rm = TRUE),
+    mediana_horas = median(horas_log, na.rm = TRUE),
+    max_horas = max(horas_log, na.rm = TRUE)
+  ) 
+trabajo_nr_por_sexo_ing <- trabajo_nr_por_sexo_ing %>% 
+  mutate(mediageom_tnr = exp(media_horas) - 1)
+
+print(trabajo_nr_por_sexo_ing) 
+```
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 1. Promedio de horas de trabajo no remunerado por sexo de personas dependientes económicas por solo percibir ingresos ajenos al trabajo
+trabajo_nr_por_sexo_ing <- dep_eco_ing %>% 
+  group_by(sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+  # summarise(median_tnr = median(horas_tnr), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_sexo_ing <- trabajo_nr_por_sexo_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+  
+# Convertir horas a formato hh:mm:ss
+#  trabajo_nr_por_sexo <- trabajo_nr_por_sexo %>% 
+#    mutate(
+#    media_hm = as_hms(mediageom_tnr * 3600)
+#    #mediana_hm = as_hms(median_tnr * 3600)
+#  )
+
+ggplot(trabajo_nr_por_sexo_ing, aes(x = sexo, y = mediageom_tnr, fill = sexo)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.8, width = 0.5) +
+  geom_text(aes(label = round(mediageom_tnr, 2),vjust = -0.5, size = 1)) +
+  labs(title = "Gráfica 1. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos de transferencias)",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "NONE",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold")
+  ) +
+  scale_fill_manual(values = c("Hombre" = "orchid3", "Mujer" = "steelblue")) 
+```
+
+##### Gráfica 2.
+
+Promedio de horas de trabajo no remunerado por sexo y etnia de personas dependientes económicas por solo percibir ingresos ajenos al trabajo
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 2. Promedio de horas de trabajo no remunerado por sexo y etnia de personas dependientes económicas por solo percibir ingresos ajenos al trabajo
+trabajo_nr_por_etnia_ing <- dep_eco_ing %>% 
+  group_by(etnia, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_etnia_ing <- trabajo_nr_por_etnia_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+ggplot(trabajo_nr_por_etnia_ing, aes(x = sexo, y = mediageom_tnr, fill = etnia)) +
+  geom_col(color = "black", position = "dodge", linewidth = 0.8) +
+  geom_text(aes(label = round(mediageom_tnr, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 2. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por sexo y etnia",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "darkgreen", "No" = "orange"))
+```
+
+##### Gráfica 3.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 3. Promedio de horas de trabajo no remunerado por afrodescendencia y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+trabajo_nr_por_afrod_ing <- dep_eco_ing %>% 
+  group_by(afrod, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_afrod_ing <- trabajo_nr_por_afrod_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+ggplot(trabajo_nr_por_afrod_ing, aes(x = sexo, y = mediageom_tnr, fill = afrod)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 3. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por afrodescendencia y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#6495ED", "No" = "#8B0000"))
+```
+
+##### Gráfica 4
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 4. Promedio de horas de trabajo no remunerado por zona y sexo de personas dependientes económicas por solo percibir ingresos de transferencias
+trabajo_nr_por_zona_ing <- dep_eco_ing %>% 
+  group_by(zona, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_zona_ing <- trabajo_nr_por_zona_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+# Gráfica
+ggplot(trabajo_nr_por_zona_ing, aes(x = sexo, y = mediageom_tnr, fill = zona)) +
+  geom_col(color = "black", position = "dodge", size = 0.8) +
+  geom_text(aes(label = round(mediageom_tnr,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 4. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias \n 
+       Agrupados por zona y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Urbana" = "#66CDAA", "Rural" = "#0000CD"))
+```
+
+##### Gráfica 5.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 5. Promedio de horas de trabajo no remunerado por discapacidad y sexo de personas dependientes económicas por solo percibir ingresos ajenos por transferencias
+trabajo_nr_por_disc_ing <- dep_eco_ing %>% 
+  group_by(discapacidad, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_disc_ing <- trabajo_nr_por_disc_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+# Gráfica
+ggplot(trabajo_nr_por_disc_ing, aes(x = sexo, y = mediageom_tnr, fill = discapacidad)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 5. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por discapacidad y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#E6E6FA", "No" = "#9400D3"))
+```
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 6. Promedio de horas de trabajo no remunerado por nivel de pobreza y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+trabajo_nr_por_niv_pob_ing <- dep_eco_ing %>% 
+  group_by(nivel_pobreza, sexo) %>% 
+  summarise(medialog_tnr = mean(horas_log), .groups = 'drop')
+
+# Tranformación de la variable horas_log
+trabajo_nr_por_niv_pob_ing <- trabajo_nr_por_niv_pob_ing %>%
+  mutate(mediageom_tnr = exp(medialog_tnr) - 1)
+
+# Gráfica
+ggplot(trabajo_nr_por_niv_pob_ing, aes(x = sexo, y = mediageom_tnr, fill = nivel_pobreza)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(mediageom_tnr,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 5. Promedio de horas semanales de trabajo no remunerado en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por nivel de pobreza y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("No Pobreza" = "#052659", "Pobreza por Ingresos" = "#5483B3", "Pobreza por Ingresos Extrema" = "#C1E8FF"))
+
+```
+
+##### Gráfico Combinado (HTNR)
+
+```{r}
+# Realizamos dataframes para cada variable
+df6 <- trabajo_nr_por_sexo_ing %>%
+  mutate(
+    desglose = "Promedio general",
+    valor_desglose = sexo 
+  )
+
+df7 <- trabajo_nr_por_etnia_ing %>%
+  rename(valor_desglose = etnia) %>%  
+  mutate(desglose = "Etnia")
+
+df8 <- trabajo_nr_por_afrod_ing %>%
+  rename(valor_desglose = afrod) %>%
+  mutate(desglose = "Afrodescendencia")
+
+df9 <- trabajo_nr_por_zona_ing %>%
+  rename(valor_desglose = zona) %>%
+  mutate(desglose = "Zona")
+
+df10 <- trabajo_nr_por_disc_ing %>%
+  rename(valor_desglose = discapacidad) %>%
+  mutate(desglose = "Discapacidad")
+
+df11 <- trabajo_nr_por_niv_pob_ing %>%
+  rename(valor_desglose = nivel_pobreza) %>%
+  mutate(desglose = "Nivel de Pobreza")
+```
+
+```{r}
+# Unimos todos los dataframes creados en un nuevo dataframe
+data_combinada_ing <- bind_rows(df6, df7, df8, df9, df10, df11)
+```
+
+```{r}
+# Definir orden exacto
+orden_paneles_ing <- c(
+  "Promedio general", 
+  "Etnia", 
+  "Afrodescendencia", 
+  "Discapacidad", 
+  "Zona",
+  "Nivel de Pobreza"
+)
+
+# Reescribe la columna 'desglose' como un factor ordenado
+data_combinada_ing <- data_combinada_ing %>%
+  mutate(desglose = factor(desglose, levels = orden_paneles)) 
+```
+
+```{r}
+# Paleta de colores
+paleta_colores_ing <- c(
+  "Hombre" = "#052659", "Mujer" = "#C1E8FF"
+)
+```
+
+```{r fig.width=20, fig.height=10}
+# Gráfica final
+ggplot(data_combinada_ing, aes(x = valor_desglose, y = mediageom_tnr, fill = sexo)) +
+  geom_col(color = "black", position = "dodge", linewidth = 0.8) +
+  geom_text(
+    aes(label = round(mediageom_tnr, 2)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, 
+    size = 4.5,
+    color = "black",
+  ) +
+  # 'scales = "free_x"' elimina los espacios extra en el eje X
+  facet_wrap(~ desglose, nrow = 1, scales = "free_x") +
+  labs(
+    title = "Promedio de horas semanales de trabajo no remunerado en 2024",
+    subtitle = "Dependientes económicos por solo percibir ingresos por transferencias. \n Comparativa por sexo y otras variables de desagregación",
+    caption = "\n Fuente: Elaboración propia con base a la ENIGH 2024, INEGI",
+    x = NULL, 
+    y = "",
+    fill = ""
+  ) +
+  scale_fill_manual(values = paleta_colores) + 
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 24, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 16),
+    plot.caption = element_text(hjust = 0, size = 14),
+    legend.position = "top",
+    legend.text = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r Gráfica Combinada por Horas, fig.width=25, fig.height=15}
+# Gráfica final
+ggplot(
+  data_combinada_ing, 
+  aes(
+    x = valor_desglose, 
+    y = mediageom_tnr, 
+    fill = sexo
+    )
+  ) +
+  geom_col(
+    color = "black", 
+    position = position_dodge(width = 0.9), 
+    linewidth = 0.8,
+    width = 0.8
+    ) +
+  geom_text(
+    aes(label = round(mediageom_tnr, 2)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, 
+    size = 5,
+    color = "black",
+    fontface = "bold"
+  ) +
+  # 'scales = "free_x"' elimina los espacios extra en el eje X
+  facet_wrap(~ desglose, nrow = 2, scales = "free_x") +
+  labs(
+    title = "Promedio de horas semanales de trabajo no remunerado en 2024",
+    subtitle = "Dependientes económicos por solo percibir ingresos por transferencias. \n Comparativa por sexo y otras variables de desagregación",
+    caption = "\n Fuente: Elaboración propia con base a la ENIGH 2024, INEGI",
+    x = NULL, 
+    y = "",
+    fill = ""
+  ) +
+  scale_fill_manual(values = paleta_colores_ing) + 
+  scale_y_continuous(labels = scales::dollar_format(),
+                     expand = expansion(mult = c(0.05, 0.15))
+                     ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 20),
+    plot.caption = element_text(hjust = 0, size = 14),
+    legend.position = "top",
+    legend.text = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+```{r}
+# Propuesta: Correlación entre Ingreso y Horas de trabajo no remunerado
+cor(dep_eco_ing$ingreso_mensual, dep_eco_ing$horas_log, use = "complete.obs")
+```
+
+```{r}
+glimpse(dep_eco_ing)
+```
+
+##### Gráfica 6.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 6. Promedio de ingreso mensual por sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+ing_por_sexo <- dep_eco_ing %>% 
+  group_by(sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+  # summarise(median_tnr = median(horas_tnr), .groups = 'drop')
+
+# Gráfica
+
+ggplot(ing_por_sexo, aes(x = sexo, y = ingreso_promedio, fill = sexo)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.8, width = 0.5) +
+  geom_text(aes(label = round(ingreso_promedio, 2),vjust = -0.5, size = 1)) +
+  labs(title = "Gráfica 6. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias)",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "NONE",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold")
+  ) +
+  scale_fill_manual(values = c("Hombre" = "orchid3", "Mujer" = "steelblue"))
+```
+
+Obtenemos el porcentaje de hombre y mujeres que son dependiente económicos por recibir ingresos solo por transferencias.
+
+```{r fig.width=10, fig.height=7}
+
+# 1. Procesamiento de datos
+# Calculamos el promedio, pero también el conteo (n) para sacar el porcentaje
+ing_por_sexo <- dep_eco_ing %>% 
+  group_by(sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n() # Contamos cuántos hombres y mujeres hay
+  ) %>%
+  ungroup() %>%
+  mutate(
+    # Calculamos el porcentaje respecto al total de observaciones en esta tabla
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_sexo, aes(x = sexo, y = ingreso_promedio, fill = sexo)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.8, width = 0.5) +
+  
+  # AQUI ESTA EL CAMBIO PRINCIPAL EN LA ETIQUETA:
+  geom_text(aes(
+    # Creamos una etiqueta de dos líneas:
+    # Línea 1: El ingreso (con formato de pesos si deseas)
+    # Línea 2: El porcentaje entre paréntesis
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ), 
+    vjust = -0.2, 
+    size = 4,     
+    fontface = "bold"
+  ) +
+  
+  labs(title = "Gráfica 6. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias)",
+       x = "",
+       y = "Ingreso Promedio", 
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "NONE",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.title.y = element_blank()
+  ) +
+  # Expandimos el límite Y un 15% hacia arriba para que quepa la etiqueta doble
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) + 
+  scale_fill_manual(values = c("Hombre" = "orchid3", "Mujer" = "steelblue"))
+```
+
+##### Gráfica 7.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 7. Promedio de ingreso mensual por sexo y etnia de personas dependientes económicas por solo percibir ingresos ajenos al trabajo
+ing_por_etnia <- dep_eco_ing %>% 
+  group_by(etnia, sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+
+# Gráfica
+ggplot(ing_por_etnia, aes(x = sexo, y = ingreso_promedio, fill = etnia)) +
+  geom_col(color = "black", position = "dodge", linewidth = 0.8) +
+  geom_text(aes(label = round(ingreso_promedio, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 7. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos ajenos al trabajo) \n 
+       Agrupados por sexo y etnia",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "darkgreen", "No" = "orange"))
+```
+
+```{r fig.width=10, fig.height=7}
+# 1. Procesamiento de datos
+ing_por_etnia <- dep_eco_ing %>% 
+  group_by(etnia, sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n(), # Contamos cuántas personas hay en cada combinación (Sexo + Etnia)
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Calculamos el porcentaje dividiendo entre la suma TOTAL de todas las observaciones
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_etnia, aes(x = sexo, y = ingreso_promedio, fill = etnia)) +
+  # Usamos position_dodge explícito para controlar el ancho y alinear el texto
+  geom_col(color = "black", position = position_dodge(width = 0.9), linewidth = 0.8, width = 0.8) +
+  
+  geom_text(aes(
+    # Etiqueta combinada: Ingreso + Porcentaje
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ),
+    # Es IMPORTANTE que el width aquí coincida con el del position_dodge de las barras (0.9)
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, 
+    size = 3.5,
+    color = "black",
+    fontface = "bold") +
+  
+  labs(title = "Gráfica 7. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n Agrupados por sexo y etnia",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank() # Ocultamos eje Y si las etiquetas ya muestran los valores
+  ) +
+  # Expandimos el eje Y para que quepan las etiquetas
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(values = c("Si" = "darkgreen", "No" = "orange"))
+```
+
+##### Gráfica 8.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 8. Promedio de ingreso mensual por afrodescendencia y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+ing_por_afrod <- dep_eco_ing %>% 
+  group_by(afrod, sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+
+# Gráfica
+ggplot(ing_por_afrod, aes(x = sexo, y = ingreso_promedio, fill = afrod)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(ingreso_promedio, 2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 8. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por afrodescendencia y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#6495ED", "No" = "#8B0000"))
+```
+
+```{r fig.width=10, fig.height=7}
+# 1. Procesamiento de datos
+ing_por_afrod <- dep_eco_ing %>% 
+  group_by(afrod, sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n(), # Contamos las personas
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Calculamos el porcentaje respecto al total de la muestra
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_afrod, aes(x = sexo, y = ingreso_promedio, fill = afrod)) +
+  # Usamos width=0.9 en position_dodge para alinear bien las barras
+  geom_col(color = "black", position = position_dodge(width = 0.9), linewidth = 0.8) +
+  
+  geom_text(aes(
+    # Etiqueta combinada: Ingreso + Porcentaje
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ),
+    # Es vital que este width coincida con el de geom_col
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, 
+    size = 3.5,
+    color = "black",
+    fontface = "bold") +
+  
+  labs(title = "Gráfica 8. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n Agrupados por afrodescendencia y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  # Expandimos el eje Y para que quepa la etiqueta doble
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(values = c("Si" = "#6495ED", "No" = "#8B0000"))
+```
+
+##### Gráfica 9.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 9. Promedio de ingreso mensual por zona y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+ing_por_zona <- dep_eco_ing %>% 
+  group_by(zona, sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+
+# Gráfica
+ggplot(ing_por_zona, aes(x = sexo, y = ingreso_promedio, fill = zona)) +
+  geom_col(color = "black", position = "dodge", size = 0.8) +
+  geom_text(aes(label = round(ingreso_promedio,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 9. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por zona y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Urbana" = "#66CDAA", "Rural" = "#0000CD"))
+```
+
+```{r fig.width=10, fig.height=7}
+# 1. Procesamiento de datos
+ing_por_zona <- dep_eco_ing %>% 
+  group_by(zona, sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n(), # Contamos las personas por zona y sexo
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Calculamos el porcentaje sobre el total general
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_zona, aes(x = sexo, y = ingreso_promedio, fill = zona)) +
+  # Usamos position_dodge con width 0.9 para separar las barras
+  geom_col(color = "black", position = position_dodge(width = 0.9), linewidth = 0.8) +
+  
+  geom_text(aes(
+    # Etiqueta combinada: Ingreso + Porcentaje
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ),
+    # position_dodge debe coincidir con el de geom_col
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, 
+    size = 3.5,
+    color = "black",
+    fontface = "bold") +
+  
+  labs(title = "Gráfica 9. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n Agrupados por zona y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  # Expandimos el eje Y para que quepa la etiqueta doble
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(values = c("Urbana" = "#66CDAA", "Rural" = "#0000CD"))
+```
+
+##### Gráfica 10.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 10. Promedio de ingreso mensual por discapacidad y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+ing_por_disc <- dep_eco_ing %>% 
+  group_by(discapacidad, sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+
+# Gráfica
+ggplot(ing_por_disc, aes(x = sexo, y = ingreso_promedio, fill = discapacidad)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(ingreso_promedio,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 10. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por discapacidad y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("Si" = "#E6E6FA", "No" = "#9400D3"))
+```
+
+```{r fig.width=10, fig.height=7}
+# 1. Procesamiento de datos
+ing_por_disc <- dep_eco_ing %>% 
+  group_by(discapacidad, sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n(), # Contamos las observaciones
+    .groups = 'drop'
+  ) %>% 
+  mutate(
+    # Calculamos el porcentaje respecto al total
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_disc, aes(x = sexo, y = ingreso_promedio, fill = discapacidad)) +
+  # Ajustamos position_dodge a 0.9 para alinear barras y texto correctamente
+  geom_col(color = "black", position = position_dodge(width = 0.9), linewidth = 0.8) +
+  
+  geom_text(aes(
+    # Etiqueta combinada: Ingreso + Porcentaje
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ),
+    position = position_dodge(width = 0.9), # Debe coincidir con el width de geom_col
+    vjust = -0.3, 
+    size = 3.5,
+    color = "black",
+    fontface = "bold") +
+  
+  labs(title = "Gráfica 10. Promedio de ingreso mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n Agrupados por discapacidad y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  # Expandimos el eje Y
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(values = c("Si" = "#E6E6FA", "No" = "#9400D3"))
+
+```
+
+##### Gráfica 11.
+
+```{r fig.width=10, fig.height=7}
+# Gráfica 11. Promedio de ingreso mensual por nivel de pobreza y sexo de personas dependientes económicas por solo percibir ingresos por transferencias
+ing_por_nivel_pobreza <- dep_eco_ing %>% 
+  group_by(nivel_pobreza, sexo) %>% 
+  summarise(ingreso_promedio = mean(ingreso_mensual), .groups = 'drop')
+
+# Gráfica
+ggplot(ing_por_nivel_pobreza, aes(x = sexo, y = ingreso_promedio, fill = nivel_pobreza)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_text(aes(label = round(ingreso_promedio,2)),
+            position = position_dodge(width = 1),
+            vjust = -0.5, 
+            size = 3.5,
+            color = "black") +
+  labs(title = "Gráfica 10. Promedio de Ingreso Mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n 
+       Agrupados por nivel de pobreza y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  scale_fill_manual(values = c("No Pobreza" = "#008B45", "Pobreza por Ingresos" = "#CDCD00", "Pobreza por Ingresos Extrema" = "#8B1A1A"))
+```
+
+```{r fig.width=10, fig.height=7}
+# 1. Procesamiento de datos
+ing_por_nivel_pobreza <- dep_eco_ing %>% 
+  group_by(nivel_pobreza, sexo) %>% 
+  summarise(
+    ingreso_promedio = mean(ingreso_mensual),
+    conteo = n(), # Contamos las observaciones por nivel de pobreza y sexo
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Calculamos el porcentaje respecto al total de la muestra
+    porcentaje = (conteo / sum(conteo)) * 100
+  )
+
+# 2. Gráfica
+ggplot(ing_por_nivel_pobreza, aes(x = sexo, y = ingreso_promedio, fill = nivel_pobreza)) +
+  # Usamos width=0.9 para asegurar alineación (el estándar que hemos usado)
+  geom_col(color = "black", position = position_dodge(width = 0.9), linewidth = 0.8) +
+  
+  geom_text(aes(
+    # Etiqueta combinada: Ingreso + Porcentaje
+    label = paste0("$", format(round(ingreso_promedio, 2), big.mark=","), 
+                   "\n(", round(porcentaje, 1), "%)")
+    ),
+    # position_dodge debe coincidir con el de geom_col
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, 
+    size = 3.5,
+    color = "black",
+    fontface = "bold") +
+  
+  labs(title = "Gráfica 11. Promedio de Ingreso Mensual en 2024",
+       subtitle = "(Dependientes económicos por solo percibir ingresos por transferencias) \n Agrupados por nivel de pobreza y sexo",
+       x = "",
+       y = "",
+       caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    plot.caption = element_text(hjust = 0, size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  # Expandimos el eje Y para que quepa la etiqueta doble
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(values = c("No Pobreza" = "#008B45", 
+                               "Pobreza por Ingresos" = "#CDCD00", 
+                               "Pobreza por Ingresos Extrema" = "#8B1A1A"))
+```
+
+##### Gráfico Combinado (Ingreso mensual)
+
+```{r}
+# Realizamos dataframes para cada variable
+df11 <- ing_por_sexo %>%
+  mutate(
+    desglose = "Promedio general",
+    valor_desglose = sexo 
+  )
+
+df12 <- ing_por_etnia %>%
+  rename(valor_desglose = etnia) %>%  
+  mutate(desglose = "Etnia")
+
+df13 <- ing_por_afrod %>%
+  rename(valor_desglose = afrod) %>%
+  mutate(desglose = "Afrodescendencia")
+
+df14 <- ing_por_zona %>%
+  rename(valor_desglose = zona) %>%
+  mutate(desglose = "Zona")
+
+df15 <- ing_por_disc %>%
+  rename(valor_desglose = discapacidad) %>%
+  mutate(desglose = "Discapacidad")
+
+df16 <- ing_por_nivel_pobreza %>%
+  rename(valor_desglose = nivel_pobreza) %>%
+  mutate(desglose = "Nivel de Pobreza")
+
+```
+
+```{r}
+# Unimos todos los dataframes creados en un nuevo dataframe
+data_combinada_ing2 <- bind_rows(df11, df12, df13, df14, df15, df16)
+
+glimpse(data_combinada_ing2)
+```
+
+```{r}
+# Definir orden exacto
+orden_paneles_ing2 <- c(
+  "Promedio general", 
+  "Etnia", 
+  "Afrodescendencia", 
+  "Discapacidad", 
+  "Zona",
+  "Nivel de Pobreza"
+)
+
+# Reescribe la columna 'desglose' como un factor ordenado
+data_combinada_ing2 <- data_combinada_ing2 %>%
+  mutate(desglose = factor(desglose, levels = orden_paneles_ing2)) 
+```
+
+```{r}
+# Paleta de colores
+paleta_colores_ing2 <- c(
+  "Hombre" = "#104E8B", "Mujer" = "#68228B"
+)
+```
+
+```{r Gráfica Combinada por Ingreso, fig.width=25, fig.height=15}
+# Gráfica final
+ggplot(
+  data_combinada_ing2, 
+  aes(
+    x = valor_desglose, 
+    y = ingreso_promedio, 
+    fill = sexo
+    )
+  ) +
+  geom_col(
+    color = "black", 
+    position = position_dodge(width = 0.9), 
+    linewidth = 0.8,
+    width = 0.8
+    ) +
+  geom_text(
+    aes(label = scales::dollar(ingreso_promedio)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, 
+    size = 5,
+    color = "black",
+    fontface = "bold"
+  ) +
+  # 'scales = "free_x"' elimina los espacios extra en el eje X
+  facet_wrap(~ desglose, nrow = 2, scales = "free_x") +
+  labs(
+    title = "Promedio del Ingreso Mensual en 2024",
+    subtitle = "Dependientes económicos por solo percibir ingresos ajenos al trabajo. \n Comparativa por sexo y otras variables de desagregación",
+    caption = "\n Fuente: Elaboración propia con base a la ENIGH 2024, INEGI",
+    x = NULL, 
+    y = "",
+    fill = ""
+  ) +
+  scale_fill_manual(values = paleta_colores_ing2) + 
+  scale_y_continuous(labels = scales::dollar_format(),
+                     expand = expansion(mult = c(0.05, 0.15))
+                     ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 20),
+    plot.caption = element_text(hjust = 0, size = 14),
+    legend.position = "top",
+    legend.text = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+```{r Gráfica Combinada por Ingreso2, fig.width=25, fig.height=15}
+# Gráfica final
+ggplot(
+  data_combinada_ing2, 
+  aes(
+    x = valor_desglose, 
+    y = ingreso_promedio, 
+    fill = sexo
+  )
+) +
+  # Barras agrupadas
+  geom_col(
+    color = "black", 
+    position = position_dodge(width = 0.9), 
+    linewidth = 0.8,
+    width = 0.8
+  ) +
+  
+  # Etiquetas de texto (Ingreso + Porcentaje)
+  geom_text(
+    aes(
+      label = paste0(scales::dollar(ingreso_promedio), "\n(", round(porcentaje, 1), "%)")
+    ),
+    # Es crucial que el width del dodge sea el mismo que en geom_col (0.9)
+    position = position_dodge(width = 0.9),
+    vjust = -0.3,  # Ajuste vertical para que quede encima de la barra
+    size = 3.5,    # Tamaño de letra ajustado para que no se amontone
+    color = "black",
+    fontface = "bold"
+  ) +
+  
+  # Facetas para separar por tipo de desglose (Etnia, Zona, etc.)
+  facet_wrap(~ desglose, nrow = 2, scales = "free_x") +
+  
+  # Títulos y etiquetas
+  labs(
+    title = "Promedio del Ingreso Mensual en 2024",
+    subtitle = "Dependientes económicos por solo percibir ingresos por transferencias.\nComparativa por sexo y variables de desagregación",
+    caption = "Fuente: Elaboración propia con base a la ENIGH 2024, INEGI",
+    x = NULL, 
+    y = "Ingreso Promedio",
+    fill = "Sexo"
+  ) +
+  
+  # Escala de colores (Usa tu paleta definida o los colores manuales)
+  scale_fill_manual(values = paleta_colores_ing2) + 
+  
+  # Ajuste del eje Y
+  scale_y_continuous(
+    labels = scales::dollar_format(),
+    # Expandimos el eje Y un 20% hacia arriba para dar espacio a las etiquetas dobles
+    expand = expansion(mult = c(0, 0.2))
+  ) +
+  
+  # Tema visual
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold"), # Ajusté tamaños para mejor visualización
+    plot.subtitle = element_text(hjust = 0.5, size = 14),
+    plot.caption = element_text(hjust = 0, size = 10),
+    legend.position = "top",
+    legend.text = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 11, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
