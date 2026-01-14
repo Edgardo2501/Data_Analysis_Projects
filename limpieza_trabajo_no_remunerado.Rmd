@@ -1,0 +1,452 @@
+------------------------------------------------------------------------
+
+---
+title: 'Limpieza del dataset poblacion de la ENIGH 2024, creación de la variable "trabajo no remunerado"'
+author: "Edgardo Flores Gutiérrez"
+date: "2025-09-24"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    collapsed: true
+    smooth_scroll: true
+    theme: journal
+    highlight: kate
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, include=TRUE)
+```
+
+```{r Carga de paquetes, include=FALSE}
+# Cargar paquetes
+library(tidyverse)
+library(survey)
+library(srvyr)
+```
+
+## Extracción, Limpieza y Carga del dataset
+
+Las tablas de datos utilizadas son Ingresos, Población y Viviendas de la ENIGH 2024
+
+### Extracción
+
+```{r Tabla Ingresos, include=FALSE}
+# Extraer la tabla de datos ingresos.csv de la ENIGH 2024
+ingresos <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/ingresos.csv")
+```
+
+```{r Tabla Población, include=FALSE}
+# Extraer la tabla de datos población.csv de la ENIGH 2024
+poblacion <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/poblacion.csv")
+```
+
+```{r Tabla Viviendas, include=FALSE}
+# Extraer la tabla de datos viviendas.csv de la ENIGH 2024
+viviendas <- read.csv("C:/Users/edgar/OneDrive/Documentos/Tesis_Jhael/dataset/viviendas.csv")
+```
+
+### Limpieza
+
+#### Análisis exploratorio
+
+Revisión de tipo de datos, variables y las primeras y últimas filas.
+
+```{r Clase Tablas}
+class(poblacion)
+class(viviendas)
+```
+
+```{r Primeras u últimas Filas}
+head(poblacion)
+tail(poblacion)
+head(viviendas)
+tail(viviendas)
+```
+
+```{r Características de las Tablas}
+glimpse(poblacion)
+glimpse(viviendas)
+```
+
+#### Cruce de datos
+
+Cruce de la tabla población con la tabla viviendas
+
+```{r Cruce población y viviendas}
+# Crear tabla de zona, se considera unicamente el folioviv y el tam_loc
+df_zona <- viviendas %>% 
+  select(folioviv, tam_loc)
+
+pob <- left_join(poblacion, df_zona, by = "folioviv")
+glimpse(pob)
+```
+
+#### Creación de variables
+
+**Variable: FVH(Folio vivienda hogar)**
+
+Se consideran las siguientes variables:
+
+1.  folioviv
+2.  foliohog
+3.  numren
+
+```{r}
+# Creción del Folio Vivienda Hogar para la tabla Pob (Poblacion) e Ingresos
+# FVH pob
+pob <- pob %>% 
+  mutate(FVH = paste0(folioviv, foliohog, numren)) # paste0 para concatenar sin separador)
+
+# FVH Ingresos
+df_ingresos <- ingresos %>% 
+    mutate(FVH = paste0(folioviv, foliohog, numren))
+```
+
+```{r}
+pob %>% 
+  select(folioviv, foliohog, numren, FVH) %>% 
+  slice(1:20)
+```
+
+**Creación de la tabla perceptores a partir de la tabla de ingresos**
+
+Se considera *perceptor* a aquel individuo con un ingreso mayor a cero (se evaluá mediante la variable ing_tri)
+
+```{r}
+# Crear tabla "Perceptores"
+df_perceptores <- df_ingresos %>% 
+  filter(ing_tri > 0) %>% 
+  group_by(FVH, folioviv, foliohog, numren, clave) %>% 
+  summarise(ing_tri = sum(ing_tri, na.rm = TRUE)) %>%
+  ungroup() %>% 
+  mutate(perceptor = 1)
+```
+
+```{r}
+# Cruzar la tabla población y la tabla perceptores mediante la columna FVH
+df_pob_per <- left_join(pob, df_perceptores, by = "FVH", suffix = c("pob", "per"))
+```
+
+```{r include=FALSE}
+# Análisis exploratorio
+glimpse(df_pob_per)
+```
+
+**Variable: trabajo no remunerado (horas_tnr) (tabla población)**
+
+Se consideran las siguientes variables:
+
+1.  hor_3: Horas de trabajo comunitario.
+
+2.  hor_4: Horas de cuidado de otras personas.
+
+3.  hor_5: Horas de reparación.
+
+4.  hor_6: Horas dedicadas a quehacer.
+
+Las variables de horas (mencionadas previamente) en la ENIGH **no son mutuamente excluyentes**. Esto se debe a que las personas pueden realizar múltiples actividades simultáneamente. Por ejemplo, alguien puede estar cuidando a un niño (trabajo no remunerado) mientras cocina (trabajo doméstico). Por lo qué, la suma directa de las horas de diferentes actividades puede llevar a totales semanales que exceden las 168 horas.
+
+Dado la situación planteada, se realiza la siguiente imputación:
+
+-   **Suma las horas** `horas_tnr_brutas = hor_3 + hor_4 + hor_5 + hor_6`.
+
+-   **Aplicar un límite máximo:** Se establece el límite máximo de horas que una persona puede dedicar al trabajo en una semana. Se usa como tope el total de horas de vigilia (aprox. 112 horas, asumiendo 8 horas de sueño diario).
+
+    -   `horas_tnr_ajustada = min(horas_tnr_brutas, 112)`
+
+    -   Esto asume que cualquier valor por encima de ese umbral es resultado de la simultaneidad de tareas.
+
+Justificación:
+
+Al establecer un tope máximo de 112 horas, se aplica una regla lógica y defendible:
+
+1.  **Realismo Fisiológico**: Se asume que una persona duerme un promedio de 8 horas diarias (56 horas a la semana), dejando un máximo de **112 horas de vigilia** (`168 - 56 = 112`). Es físicamente imposible que alguien dedique más de sus horas de vigilia al trabajo (remunerado o no).
+
+2.  **Corrección de la Multitarea**: Este tope corrige los valores inflados por la suma de actividades simultáneas. En lugar de intentar desenredar qué actividad se hizo cuándo, simplemente se establece un límite superior plausible. La variable resultante, `horas_tnr`, puede interpretarse como una estimación más realista de la **carga total de tiempo** dedicada al trabajo no remunerado.
+
+Variables **`horas_tnr_bruto`** que cuenta todas las horas de trabajo no remunerado
+
+```{r}
+# Crear columna nueva que cuente las horas de trabajo no remunerado
+df_pob_per <- df_pob_per %>% 
+  mutate(
+    horas_tnr_bruto = rowSums(
+      select(.,hor_3, hor_4, hor_5, hor_6),
+      na.rm = TRUE #Ignora los NA al sumar
+    )
+  )
+```
+
+Tope de 112 horas a la variable **`horas_tnr_bruto`**
+
+```{r}
+# Aplicar tope de 112 horas a la variable horas_tnr
+df_pob_per <- df_pob_per %>% 
+  mutate(
+    horas_tnr = pmin(horas_tnr_bruto, 112)
+  )
+```
+
+```{r}
+# Explorar variable trabajo_no_remunerado
+top10 <- df_pob_per %>% 
+  select(
+    FVH, foliovivpob, foliohogpob, numrenpob, hor_3, hor_4, hor_5, hor_6, horas_tnr
+    ) %>% 
+  slice(1:20)
+
+print(top10)
+```
+
+```{r}
+top <- poblacion %>% 
+  select(folioviv, foliohog, numren, hor_3, hor_4, hor_5, hor_6) %>% 
+  slice(1:20)
+
+print(top)
+```
+
+**Variable: discapacidad**
+
+Se consideran las siguientes variables de la tabla población:
+
+-   disc_ver = discapacidad para ver
+
+-   disc_oir = discapacidad para escuchar
+
+-   disc_brazo = discapacidad para usar brazos
+
+-   disc_camin = discapacidad para caminar
+
+-   disc_apren = discapacidad para aprender
+
+-   disc_vest = discapacidad para vestirse
+
+-   disc_habla = discapacidad para hablar
+
+-   disc_acti = discapacidad para realizar actividades diarias
+
+```{r}
+df_pob_per <- df_pob_per %>%
+  mutate(discapacidad = case_when(
+    # La condición verifica si ALGUNO de los valores en las columnas especificadas
+    # es igual a 3 O es igual a 4.
+    if_any(
+      .cols = starts_with("disc_"),  # Selecciona todas las columnas que empiezan con "disc_"
+      .fns = ~ .x == 3 | .x == 4   # La función que se aplica: ¿es 3 o 4?
+    ) ~ "Si",
+    # Si la condición anterior no se cumple, el valor es "no"
+    TRUE ~ "No"
+  ))
+```
+
+```{r}
+disc <- df_pob_per %>%
+  select(starts_with("disc_"), discapacidad) %>% 
+  slice(1:20)
+print(disc)
+```
+
+#### Selección, Filtro y Transformación de variables a trabajar
+
+Las variables a utilizar son:
+
+-   FVH
+-   sexo
+-   edad
+-   ingreso
+-   afrod
+-   etnia
+-   discapacidad
+-   nivelaprob
+-   horas_tnr
+-   tam_loc
+-   entidad
+-   est_dis
+-   ump
+-   factor
+
+```{r}
+# Selecionar variables a trabajar
+df_pob_per <- df_pob_per %>% 
+  select(FVH, sexo, edad, horas_tnr, ing_tri, afrod, etnia, nivelaprob, discapacidad, tam_loc, entidad,est_dis, upm, factor)
+
+# Contar NA en todas las columnas
+pob %>%
+  summarise(across(everything(), ~sum(is.na(.))))
+```
+
+```{r}
+# Omitir valores NA
+trabajo_no_remunerado <- na.omit(df_pob_per)
+
+trabajo_no_remunerado %>% 
+  slice(1:50)
+
+```
+
+```{r}
+# Tranformar variables sexo, afrod, etnia, nivelaprob y entidad
+trabajo_no_remunerado <- trabajo_no_remunerado %>% 
+  mutate(sexo = case_when(
+    sexo == 1 ~"Hombre",
+    sexo == 2 ~"Mujer")
+    ) %>% 
+  mutate(afrod = case_when(
+    afrod == 1 ~ "Si",
+    afrod == 2 ~ "No")
+    ) %>% 
+  mutate(etnia = case_when(
+    etnia == 1 ~ "Si",
+    etnia == 2 ~ "No")
+    ) %>% 
+  mutate(escolaridad = case_when(
+    nivelaprob == 0 ~ "Ninguno",
+    nivelaprob == 1 ~ "Preescolar",
+    nivelaprob == 2 ~ "Primaria",
+    nivelaprob == 3 ~ "Secundaria",
+    nivelaprob == 4 ~ "Preparatoria",
+    nivelaprob == 5 ~ "Normal",
+    nivelaprob == 6 ~ "Tecnicatura",
+    nivelaprob == 7 ~ "Licenciatura",
+    nivelaprob == 8 ~ "Especialidad",
+    nivelaprob == 9 ~ "Maestria",
+    nivelaprob == 10 ~ "Doctorado")
+    ) %>% 
+  mutate(zona = case_when(
+    tam_loc == 1 ~ "Urbana",
+    tam_loc == 2 ~ "Urbana",
+    tam_loc == 3 ~ "Urbana",
+    tam_loc == 4 ~ "Rural")
+    ) %>% 
+  mutate(entidad_name = case_when(
+    entidad == 1 ~ "Aguascalientes",
+    entidad == 2 ~ "Baja California",
+    entidad == 3 ~ "Baja California Sur",
+    entidad == 4 ~ "Campeche",
+    entidad == 5 ~ "Coahuila de Zaragoza",
+    entidad == 6 ~ "Colima",
+    entidad == 7 ~ "Chiapas",
+    entidad == 8 ~ "Chihuahua",
+    entidad == 9 ~ "Ciudad de Mexico",
+    entidad == 10 ~ "Durango",
+    entidad == 11 ~ "Guanajuato",
+    entidad == 12 ~ "Guerrero",
+    entidad == 13 ~ "Hidalgo",
+    entidad == 14 ~ "Jalisco",
+    entidad == 15 ~ "Mexico",
+    entidad == 16 ~ "Michoacan de Ocampo",
+    entidad == 17 ~ "Morelos",
+    entidad == 18 ~ "Nayarit",
+    entidad == 19 ~ "Nuevo Leon",
+    entidad == 20 ~ "Oaxaca",
+    entidad == 21 ~ "Puebla",
+    entidad == 22 ~ "Queretaro",
+    entidad == 23 ~ "Quintana Roo",
+    entidad == 24 ~ "San Luis Potosi",
+    entidad == 25 ~ "Sinaloa",
+    entidad == 26 ~ "Sonora",
+    entidad == 27 ~ "Tabasco",
+    entidad == 28 ~ "Tamaulipas",
+    entidad == 29 ~ "Tlaxcala",
+    entidad == 30 ~ "Veracruz",
+    entidad == 31 ~ "Yucatan",
+    entidad == 32 ~ "Zacatecas",
+    TRUE ~ NA_character_) # Para cualquier otro valor
+    )
+
+trabajo_no_remunerado %>% 
+  slice(1:50)
+```
+
+```{r}
+# Crear la variable región
+trabajo_no_remunerado <- trabajo_no_remunerado %>%
+  mutate(region = case_when(
+    entidad_name == "Aguascalientes" ~ "Centro", 
+    entidad_name == "Baja California" ~ "Norte",
+    entidad_name == "Baja California Sur" ~ "Norte",
+    entidad_name == "Campeche" ~ "Sur",
+    entidad_name == "Chiapas" ~ "Sur",
+    entidad_name == "Chihuahua" ~ "Norte", 
+    entidad_name == "Ciudad de Mexico" ~ "Centro", 
+    entidad_name == "Coahuila de Zaragoza" ~ "Norte",
+    entidad_name == "Colima" ~ "Occidente",
+    entidad_name == "Durango" ~ "Norte",
+    entidad_name == "Mexico" ~ "Centro",
+    entidad_name == "Guanajuato" ~ "Centro",
+    entidad_name == "Guerrero" ~ "Sur",
+    entidad_name == "Hidalgo" ~ "Centro",
+    entidad_name == "Jalisco" ~ "Occidente",
+    entidad_name == "Michoacan de Ocampo" ~ "Occidente",
+    entidad_name == "Morelos" ~ "Centro",
+    entidad_name == "Nayarit" ~ "Occidente",
+    entidad_name == "Nuevo Leon" ~ "Norte",
+    entidad_name == "Oaxaca" ~ "Sur",
+    entidad_name == "Puebla" ~ "Centro",
+    entidad_name == "Queretaro" ~ "Centro", 
+    entidad_name == "Quintana Roo" ~ "Sur",
+    entidad_name == "San Luis Potosi" ~ "Centro",
+    entidad_name == "Sinaloa" ~ "Norte",
+    entidad_name == "Sonora" ~ "Norte",
+    entidad_name == "Tabasco" ~ "Sur",
+    entidad_name == "Tamaulipas" ~ "Norte",
+    entidad_name == "Tlaxcala" ~ "Centro",
+    entidad_name == "Veracruz" ~ "Sur", 
+    entidad_name == "Yucatan" ~ "Sur",
+    entidad_name == "Zacatecas" ~ "Centro")
+    )
+trabajo_no_remunerado %>% 
+  slice(1:50)
+```
+
+**Definición del nivel de pobreza en base a la linea de pobreza moderada y pobreza extrema por ingresos del CONEVAL**
+
+```{r}
+trabajo_no_remunerado <- trabajo_no_remunerado %>%
+  mutate(ingreso_mensual = round(ing_tri/3), 2) %>% 
+  mutate(nivel_pobreza = case_when(
+    # Evaluar Pobreza Extrema
+    zona == "Urbana" & ingreso_mensual <= 2363.67 ~ "Pobreza por Ingresos Extrema",
+    zona == "Rural" & ingreso_mensual <= 1799.71 ~ "Pobreza por Ingresos Extrema",
+  
+    # Evaluar Pobreza Moderada
+    zona == "Urbana" & ingreso_mensual <= 4640.16 ~ "Pobreza por Ingresos",
+    zona == "Rural" & ingreso_mensual <= 3334.24 ~ "Pobreza por Ingresos",
+    
+    # Asignar un valor a los que no son pobres
+    # 'TRUE' captura todos los casos restantes
+    TRUE ~ "No Pobreza" 
+  ))
+```
+
+Filtrar los individuos que realizan trabajo no remunerado
+
+```{r}
+trabajo_no_remunerado <- trabajo_no_remunerado %>% 
+  filter(horas_tnr >0) %>% 
+  select(FVH,sexo, edad, horas_tnr, ingreso_mensual, nivel_pobreza, escolaridad, region, afrod, etnia, discapacidad, zona, entidad_name, factor, est_dis, upm)
+
+trabajo_no_remunerado %>% 
+  slice(1:50)
+```
+
+```{r}
+# Renombrar variables
+trabajo_no_remunerado <- trabajo_no_remunerado %>% 
+  rename(
+    entidad = entidad_name
+  )
+```
+
+### Carga
+
+Exportar a formato csv la base limpia.
+
+```{r include=FALSE}
+write.csv(trabajo_no_remunerado, "trabajo_no_remunerado.csv", row.names = FALSE)
+```
